@@ -13,6 +13,7 @@ class FoenixDebugPort:
 
     def open(self, port):
         """Open a connection to the C256 Foenix."""
+
         if ':' in port:
             # A pretty weak test, looking for something like '192.168.1.114:2560'
             self.connection = SocketFoenixConnection()
@@ -31,6 +32,8 @@ class FoenixDebugPort:
 
     def enter_debug(self):
         """Send the command to make the C256 Foenix enter its debug mode."""
+
+        config = foenix_config.FoenixConfig()
         self.transfer(constants.CMD_ENTER_DEBUG, 0, 0, 0)
 
     def exit_debug(self):
@@ -80,9 +83,45 @@ class FoenixDebugPort:
         Data to be written should already be in the C256's RAM at address."""
         self.transfer(constants.CMD_PROGRAM_FLASH, address, 0, 0)
 
+    def write_block32(self, address, data):
+        """Write data to a machine requiring 32-bit alignment on the data."""
+        size = len(data)
+        address_align = address % 4
+        if address_align == 0 and size % 4 == 0:
+            # The block aligns correctly... just write it
+            self.transfer(constants.CMD_WRITE_MEM, address, data, 0)
+
+        else:
+            # Otherwise, we need to pull the current contents down and modify it
+            adjusted_address = address - address_align
+            adjusted_size = size + address_align
+            size_align = adjusted_size % 4
+            if size_align > 0:
+                adjusted_size += (4 - size_align)
+
+            # Read the data from the machine's RAM
+            block = bytearray(self.read_block(adjusted_address, adjusted_size))
+
+            # Copy the data to the correct position within the buffer
+            for i in range(0, size):
+                block[address_align + i] = data[i]
+
+            # Write the modified block back to the machine's RAM
+            self.transfer(constants.CMD_WRITE_MEM, adjusted_address, block, 0)
+
     def write_block(self, address, data):
         """Write a block of data to the specified starting address in the C256's memory."""
-        self.transfer(constants.CMD_WRITE_MEM, address, data, 0)
+
+        # If the CPU is a 680x0 (32-bit architecture) make sure the data is a multiple of 4 bytes
+        # Data on these CPUs must be loaded as 32-bit words, so save them in memory blocks
+        # These memory blocks will be output to the debug port just before closing it
+        config = foenix_config.FoenixConfig()
+        if config.cpu_is_m68k_32():
+            # For 68040 and 68060 machines, make sure the data is 32-aligned on both the start and finish
+            self.write_block32(address, data)
+        else:
+            # Otherwise, just send the data
+            self.transfer(constants.CMD_WRITE_MEM, address, data, 0)
 
     def read_block(self, address, length):
         """Read a block of data of the specified length from the specified starting address of the C256's memory."""

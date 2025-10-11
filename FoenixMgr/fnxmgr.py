@@ -67,7 +67,7 @@ def stop_cpu(port):
         set_stop_indicator()
     finally:
         c256.close()
-        
+
 def start_cpu(port):
     """Restart the CPU processing instructions after a stop (F256 only)."""
     c256 = foenix.FoenixDebugPort()
@@ -110,6 +110,32 @@ def upload_binary(port, filename, address):
                 exit_debug(c256)
         finally:
             c256.close()
+
+def run_m68k_bin(port, filename, address):
+	"""Upload a binary into the RAM, and load its first 2 long words into the address 0."""
+	with open(filename, "rb") as f:
+		a2560 = foenix.FoenixDebugPort()
+		try:
+			a2560.open(port)
+			enter_debug(a2560)
+			try:
+				current_addr = int(address, 16)
+				first_block = f.read(config.chunk_size())
+				block = first_block
+				while block:
+					block_len = len(block)
+					# print("Writting {} bytes at address {}".format(block_len,hex(current_addr)))
+					a2560.write_block(current_addr, block)
+					current_addr += len(block)
+					block = f.read(config.chunk_size())
+				# Write the 68k initial stack and reset vector
+				vectors = first_block[:8]
+				a2560.write_block(0,vectors)
+			finally:
+				exit_debug(a2560)
+		finally:
+			a2560.close()
+
 
 def program_flash_sector(port, filename, sector):
     """Program an 8KB sector of the flash memory using the contents of the C256's RAM."""
@@ -372,7 +398,7 @@ def copy_file(port, filename):
                 try:
                     current_addr = 0x10000
                     # Filename to char array
-                    filename_block = bytes(filename, "utf-8")
+                    filename_block = bytes(os.path.basename(filename), "utf-8")
                     # extend, zero terminate
                     zero_block = bytes([ 0x00 ])
 
@@ -615,6 +641,9 @@ parser.add_argument("--erase", action="store_true", dest="erase_flash",
 parser.add_argument("--binary", metavar="BINARY FILE", dest="binary_file",
                     help="Upload a binary file to the C256's RAM.")
 
+parser.add_argument("--run-m68k-bin", metavar="BINARY FILE", dest="run_m68k_bin",
+					help="Send a binary file to a A2560's RAM for execution. The binary must start with initial stack and reset address.")
+
 parser.add_argument("--copy", metavar="COPY FILE", dest="copy_file",
                     help="Copy a file to F256jr SDCARD.")
 
@@ -718,6 +747,9 @@ try:
 
         elif options.address and options.binary_file:
             upload_binary(options.port, options.binary_file, options.address)
+
+        elif options.address and options.run_m68k_bin:
+            run_m68k_bin(options.port, options.run_m68k_bin, options.address)
 
         elif options.address and options.flash_file:
             if options.flash_sector:
